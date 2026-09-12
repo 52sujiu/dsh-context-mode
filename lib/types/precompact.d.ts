@@ -53,6 +53,12 @@ interface ArchivedLine {
 /**
  * Install the pre-compaction archiver.
  *
+ * The listener buffers every session event as it arrives and flushes the
+ * buffer when compaction begins. Buffering rather than reading the transcript
+ * at compaction time matters: `compaction/prune` drops the events behind the
+ * summary, and it may run before an asynchronous archive reads them. A flush
+ * from our own buffer cannot race that prune.
+ *
  * @param ctx - plugin context carrying the session event bus.
  * @param getClient - resolves the live MCP client, or undefined when the bridge is down.
  * @param options - enablement and size guard.

@@ -42,20 +42,25 @@ if (listener === null) {
   process.exit(1)
 }
 
-const session = {
-  id: 'demo123',
-  seq: 10,
-  snapshotEvents: () => [
-    { type: 'user/message', seq: 0, data: { content: '不要用 Redis，我们这环境没有' } },
-    { type: 'user/message', seq: 1, data: { content: '缓存走本地文件就行' } },
-    { type: 'tool/result', seq: 2, data: { name: 'ctx_execute', message: { content: [{ type: 'text', text: '87 个失败全部是 connection pool timeout' }] } } },
-    { type: 'assistant/message', seq: 3, data: { message: { content: [{ type: 'text', text: '让我先搜索一下代码库，找到所有相关调用点' }] } } },
-    { type: 'assistant/message', seq: 4, data: { message: { content: [{ type: 'text', text: '根因是连接池配置，pool size 上限为 5' }] } } },
-  ],
-}
+// Feed transcript events first, the way a live session does, then trigger
+// compaction. The listener must have buffered them as they arrived.
+const stream = [
+  { type: 'user/message', seq: 0, data: { content: '不要用 Redis，我们这环境没有' } },
+  { type: 'user/message', seq: 1, data: { content: '缓存走本地文件就行' } },
+  { type: 'tool/result', seq: 2, data: { name: 'ctx_execute', message: { content: [{ type: 'text', text: '87 个失败全部是 connection pool timeout' }] } } },
+  { type: 'assistant/message', seq: 3, data: { message: { content: [{ type: 'text', text: '让我先搜索一下代码库，找到所有相关调用点' }] } } },
+  { type: 'assistant/message', seq: 4, data: { message: { content: [{ type: 'text', text: '根因是连接池配置，pool size 上限为 5' }] } } },
+]
 
+// A session whose live transcript is EMPTY: if the archive still succeeds, it
+// proves the buffered events were used rather than a re-read of the log, which
+// is the property that survives compaction/prune.
+const session = { id: 'demo123', seq: 10, snapshotEvents: () => [] }
+
+for (const event of stream) listener(session, event)
 listener(session, { type: 'compaction/start', seq: 5, data: {} })
 await new Promise(resolve => setTimeout(resolve, 3000))
+say('（会话实时日志为空 —— 成功即证明走了缓冲路径）\n')
 
 async function search(source, query) {
   const reply = await client.callTool('ctx_search', {

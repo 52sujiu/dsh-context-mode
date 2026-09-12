@@ -70,8 +70,24 @@ interface ArchivedLine {
 
 const DEFAULT_MAX_CHARS_PER_LAYER = 120_000
 
+/** Events that carry transcript value and are therefore buffered. */
+const CARRIES_TRANSCRIPT: ReadonlySet<string> = new Set([
+  'user/message',
+  'assistant/message',
+  'tool/result',
+])
+
+/** Buffered events per session before the oldest are dropped. */
+const MAX_BUFFERED_EVENTS = 2_000
+
 /**
  * Install the pre-compaction archiver.
+ *
+ * The listener buffers every session event as it arrives and flushes the
+ * buffer when compaction begins. Buffering rather than reading the transcript
+ * at compaction time matters: `compaction/prune` drops the events behind the
+ * summary, and it may run before an asynchronous archive reads them. A flush
+ * from our own buffer cannot race that prune.
  *
  * @param ctx - plugin context carrying the session event bus.
  * @param getClient - resolves the live MCP client, or undefined when the bridge is down.
@@ -85,20 +101,42 @@ export function installPrecompactArchive(
 ): () => void {
   if (options.enabled === false) return () => {}
   const maxCharsPerLayer = options.maxCharsPerLayer ?? DEFAULT_MAX_CHARS_PER_LAYER
+
+  // Buffered transcript per session, plus the compaction points already filed.
+  const buffers = new WeakMap<object, SessionEventLike[]>()
   const archived = new Set<string>()
 
   return ctx.on('session/event', (session: SessionLike, event: SessionEventLike): void => {
-    if (event.type !== 'compaction/start') return
-    void archive(session, getClient, maxCharsPerLayer, archived).catch(() => {
-      // Archiving is a best-effort passenger on the compaction path; a failure
-      // here must never surface in the compaction that triggered it.
-    })
+    const key = session as object
+
+    if (event.type === 'compaction/start') {
+      const buffered = buffers.get(key) ?? []
+      // Clear before the async flush: a second start event for the same
+      // compaction must not file the same content twice.
+      buffers.set(key, [])
+      void archive(session, buffered, getClient, maxCharsPerLayer, archived).catch(() => {
+        // Archiving is a best-effort passenger on the compaction path; a
+        // failure here must never surface in the compaction that triggered it.
+      })
+      return
+    }
+
+    if (!CARRIES_TRANSCRIPT.has(event.type)) return
+    const buffer = buffers.get(key)
+    if (buffer === undefined) {
+      buffers.set(key, [event])
+      return
+    }
+    buffer.push(event)
+    // Bound the buffer so a session that never compacts cannot grow forever.
+    if (buffer.length > MAX_BUFFERED_EVENTS) buffer.splice(0, buffer.length - MAX_BUFFERED_EVENTS)
   })
 }
 
-/** Read the transcript, classify it, and file each layer into the knowledge base. */
+/** Classify the buffered transcript and file each layer into the knowledge base. */
 async function archive(
   session: SessionLike,
+  buffered: readonly SessionEventLike[],
   getClient: () => McpStdioClient | undefined,
   maxCharsPerLayer: number,
   archived: Set<string>,
@@ -107,13 +145,14 @@ async function archive(
   if (client === undefined) return
 
   const key = sessionId(session)
-  // One archive per compaction; repeated start events for the same session
-  // compaction must not duplicate the content.
-  const stamp = `${key}:${session.seq ?? session.snapshotEvents().length}`
+  const stamp = `${key}:${session.seq ?? buffered.length}`
   if (archived.has(stamp)) return
   archived.add(stamp)
 
-  const lines = classify(session.snapshotEvents())
+  // Fall back to the live transcript when nothing was buffered — a plugin
+  // mounted mid-session has no history of its own but the log is still whole.
+  const events = buffered.length > 0 ? buffered : session.snapshotEvents()
+  const lines = classify(events)
   if (lines.length === 0) return
 
   const grouped = group(lines, maxCharsPerLayer)
