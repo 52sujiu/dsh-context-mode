@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -7,7 +7,8 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
-import { isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
+import { __spillRecordsForTests, installOutputContainment } from '../lib/types/output-containment.js'
+import { isFloodingSegment, isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
 const storageDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-smoke-'))
 const ctx = new Context()
@@ -46,6 +47,20 @@ try {
   assert.ok(names.includes('ctx_execute'), 'ctx_execute is registered')
   assert.ok(names.includes('ctx_search'), 'ctx_search is registered')
   assert.equal(names.filter(name => name.startsWith('ctx_')).length, 11, 'all context-mode tools are registered')
+  const schemas = tools.schemas()
+  const executeSchema = schemas.find(tool => tool.name === 'ctx_execute')
+  assert.ok(
+    executeSchema?.description?.includes('command output'),
+    'ctx_execute description carries DSH routing guidance',
+  )
+  const batchSchema = schemas.find(tool => tool.name === 'ctx_batch_execute')
+  assert.ok(
+    batchSchema?.description?.includes('three or more independent commands'),
+    'ctx_batch_execute description steers concurrent batch use',
+  )
+  const routing = await ctx.get('systemPrompt').assemble({})
+  const routingSection = routing.sections.find(section => section.name === 'dsh-context-mode:routing')
+  assert.ok(routingSection?.text.includes('default'), 'routing section is injected into the system prompt')
   const schedulingSignal = new AbortController().signal
   assert.equal(tools.executionMode({
     callId: 'dsh-context-mode-parallel-smoke',
@@ -63,6 +78,42 @@ try {
   assert.equal(stripQuotedContent("gh issue list --search 'curl wget'").includes('curl'), false, 'quoted routing text is ignored')
   assert.equal(isSafeCurlWget('curl -s -o /tmp/context-mode.json https://example.com'), true, 'silent file curl remains available')
   assert.equal(isSafeCurlWget('curl https://example.com'), false, 'stdout curl is rejected')
+
+  for (const command of [
+    'npm test',
+    'pnpm run build',
+    'pytest -q',
+    'go test ./...',
+    'cat package.json',
+    'head -100 app.log',
+    'git log --oneline',
+    'git diff HEAD~5',
+    'gh pr list',
+    'kubectl get pods',
+    'docker ps -a',
+    'aws s3 ls',
+    'rg TODO src',
+    'psql -c "select 1"',
+    'node -e "console.log(1)"',
+  ]) {
+    assert.equal(isFloodingSegment(command), true, `${command} is routed through context-mode`)
+  }
+
+  for (const command of [
+    'mkdir -p src/lib',
+    'git commit -m "x"',
+    'git push origin main',
+    'npm install left-pad',
+    'cd /tmp',
+    'pwd',
+    'echo hello',
+    'kill 1234',
+    'npm test > /tmp/test.log',
+    'cat app.log | head -20',
+    'git log --oneline | tail -5',
+  ]) {
+    assert.equal(isFloodingSegment(command), false, `${command} stays on Bash`)
+  }
 
   const unregisterBash = tools.register({
     name: 'bash',
@@ -86,6 +137,65 @@ try {
   })
   assert.equal(blocked.isError, true, 'unsafe bash routing is blocked')
   unregisterBash()
+
+  // Post-execute containment: an oversized result is shrunk and spilled.
+  const spillDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-spill-'))
+  const containmentDisposer = installOutputContainment(ctx, { maxResultBytes: 1_000, spillDir })
+  const unregisterBig = tools.register({
+    name: 'big_output',
+    description: 'smoke-test oversized result',
+    parameters: { type: 'object', properties: {} },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    execute: async () => `HEAD-MARKER\n${'x'.repeat(20_000)}\nTAIL-MARKER`,
+  })
+  const contained = await tools.execute({
+    callId: 'dsh-context-mode-containment-smoke',
+    name: 'big_output',
+    arguments: {},
+    signal: new AbortController().signal,
+  })
+  const containedText = contained.content.map(block => block.text).join('')
+  assert.equal(contained.isError, false, 'oversized results stay successful')
+  assert.ok(containedText.includes('dsh-context-mode] Output was'), 'oversized output is summarized')
+  assert.ok(containedText.includes('HEAD-MARKER'), 'head of oversized output is kept')
+  assert.ok(containedText.includes('TAIL-MARKER'), 'tail of oversized output is kept')
+  assert.ok(containedText.length < 12_000, 'oversized output is shrunk below the cap')
+  const spills = __spillRecordsForTests()
+  assert.ok(spills.length >= 1, 'oversized payload is spilled to disk')
+  assert.ok(
+    readFileSync(spills.at(-1).path, 'utf8').includes('TAIL-MARKER'),
+    'spill file holds the complete payload',
+  )
+  unregisterBig()
+  containmentDisposer()
+
+  // Small results pass through untouched.
+  const unregisterSmall = tools.register({
+    name: 'small_output',
+    description: 'smoke-test small result',
+    parameters: { type: 'object', properties: {} },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    execute: async () => 'small result body',
+  })
+  const untouched = await tools.execute({
+    callId: 'dsh-context-mode-small-smoke',
+    name: 'small_output',
+    arguments: {},
+    signal: new AbortController().signal,
+  })
+  assert.equal(
+    untouched.content.map(block => block.text).join(''),
+    'small result body',
+    'small results are not rewritten',
+  )
+  unregisterSmall()
+  rmSync(spillDir, { recursive: true, force: true })
 
   const assembly = await ctx.get('systemPrompt').assemble({
     agent: {

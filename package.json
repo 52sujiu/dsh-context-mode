@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",
@@ -30,17 +30,22 @@
   "files": [
     "lib",
     "skills",
+    "vendor/context-mode/server.bundle.mjs",
+    "vendor/context-mode/LICENSE",
+    "vendor/context-mode/src",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSING.md"
   ],
   "engines": {
     "node": "^22.19 || >=24"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:server": "node scripts/build-server.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "pnpm build && pnpm smoke",
+    "verify": "pnpm build && pnpm build:server && pnpm smoke",
     "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\""
   },
   "dsh": {
@@ -49,8 +54,7 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "context-mode": "^1.0.169"
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
