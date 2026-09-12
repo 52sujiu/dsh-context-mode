@@ -18,6 +18,7 @@ import z from '@deepseek-ai/schemastery'
 import { buildCjkQuery, segmentCjk } from './cjk.js'
 import { McpStdioClient, type McpCallResult, type McpTool } from './mcp-client.js'
 import { installOutputContainment } from './output-containment.js'
+import { installPrecompactArchive } from './precompact.js'
 import { installBashRoutingGuard } from './routing.js'
 import { installSessionMemory } from './session-memory.js'
 
@@ -35,6 +36,11 @@ export interface Config {
   storageDir?: string
   /** Timeout for the MCP initialize and tools/list handshake. */
   handshakeTimeoutMs?: number
+  /**
+   * Archive the transcript into the knowledge base when compaction begins, so
+   * `ctx_search` can still reach what the compaction summary drops.
+   */
+  precompact?: boolean
 }
 
 export const Config: Schemastery<Config> = z.object({
@@ -43,6 +49,7 @@ export const Config: Schemastery<Config> = z.object({
   projectDir: z.string().default(''),
   storageDir: z.string().default(''),
   handshakeTimeoutMs: z.number().step(1).min(1_000).default(60_000),
+  precompact: z.boolean().default(true),
 })
 
 const OUTPUT_SCHEMA: JsonSchemaNode = {
@@ -111,6 +118,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     projectDir: config.projectDir?.trim() || process.cwd(),
     storageDir: config.storageDir?.trim() || join(homedir(), '.dsh', 'context-mode'),
     handshakeTimeoutMs: config.handshakeTimeoutMs ?? 60_000,
+    precompact: config.precompact ?? true,
   }
   if (!resolved.enabled) return
 
@@ -134,6 +142,12 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   disposers.push(containmentDisposer)
   const memoryDisposer = installSessionMemory(ctx)
   disposers.push(memoryDisposer)
+  const precompactDisposer = installPrecompactArchive(
+    ctx,
+    () => client,
+    { enabled: resolved.precompact },
+  )
+  disposers.push(precompactDisposer)
   const skillDisposer = registerBundledSkill(ctx)
   if (skillDisposer !== undefined) disposers.push(skillDisposer)
 

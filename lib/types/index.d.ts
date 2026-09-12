@@ -19,6 +19,11 @@ export interface Config {
     storageDir?: string;
     /** Timeout for the MCP initialize and tools/list handshake. */
     handshakeTimeoutMs?: number;
+    /**
+     * Archive the transcript into the knowledge base when compaction begins, so
+     * `ctx_search` can still reach what the compaction summary drops.
+     */
+    precompact?: boolean;
 }
 export declare const Config: Schemastery<Config>;
 /** Register the plugin and bridge context-mode's MCP tool catalog into DSH. */

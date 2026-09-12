@@ -8,6 +8,7 @@ import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
 import { __spillRecordsForTests, installOutputContainment } from '../lib/types/output-containment.js'
+import { classify, installPrecompactArchive, statesAConcreteValue } from '../lib/types/precompact.js'
 import { isFloodingSegment, isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
 const storageDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-smoke-'))
@@ -198,6 +199,28 @@ try {
   )
   unregisterSmall()
   rmSync(spillDir, { recursive: true, force: true })
+
+  // Pre-compaction archiving: every event lands in a layer, and only prose
+  // that states a concrete value is promoted out of `narrative`.
+  const archived = classify([
+    { type: 'user/message', seq: 0, data: { content: '不要用 Redis，我们这环境没有' } },
+    { type: 'tool/result', seq: 1, data: { name: 'ctx_execute', message: { content: [{ type: 'text', text: '87 个失败是 connection pool timeout' }] } } },
+    { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: '让我先搜索一下代码库，找到所有相关调用点' }] } } },
+    { type: 'assistant/message', seq: 3, data: { message: { content: [{ type: 'text', text: '根因是连接池配置，pool size 上限为 5' }] } } },
+  ])
+  const layers = archived.map(line => line.layer)
+  assert.deepEqual(layers, ['constraint', 'finding', 'narrative', 'finding'], 'events are layered by kind and content')
+  assert.ok(archived[0].text.includes('不要用 Redis'), 'user text is archived verbatim')
+  assert.ok(archived[2].text.includes('搜索一下代码库'), 'assistant planning prose stays in narrative')
+  assert.ok(archived[3].text.includes('上限为 5'), 'assistant prose stating a value is promoted to finding')
+  assert.equal(statesAConcreteValue('我需要检查一下配置文件'), false, 'intent prose is not a finding')
+  assert.equal(statesAConcreteValue('根因是连接池耗尽'), true, 'stated root cause is a finding')
+
+  // Off by default only when disabled: the listener must not subscribe.
+  const disabledDisposer = installPrecompactArchive(ctx, () => undefined, { enabled: false })
+  disabledDisposer()
+  const archiveDisposer = installPrecompactArchive(ctx, () => undefined)
+  archiveDisposer()
 
   const assembly = await ctx.get('systemPrompt').assemble({
     agent: {
