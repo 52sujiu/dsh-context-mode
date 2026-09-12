@@ -72,8 +72,23 @@ import { resolveProjectDir } from "./util/project-dir.js";
 import { loadDatabase } from "./db-base.js";
 import { AnalyticsEngine, formatReport, getConversationStats, getContentBytesAllSessions, getConversationWindowStats, getLifetimeStats, getMultiAdapterLifetimeStats, getRealBytesStats, pricePerToken } from "./session/analytics.js";
 const __pkg_dir = dirname(fileURLToPath(import.meta.url));
+/**
+ * Version of the engine this bundle was built from.
+ *
+ * The bundle is a single file, so the directory walk below resolves against
+ * wherever it happens to sit. It looks for the vendored `package.json` (the
+ * dsh-context-mode layout), then the upstream package layout, then the classic
+ * installed-package layouts. `CONTEXT_MODE_VERSION` overrides everything, which
+ * is how a host pins the reported version without shipping a package.json.
+ */
 const VERSION: string = (() => {
-  for (const rel of ["../package.json", "./package.json"]) {
+  const override = process.env.CONTEXT_MODE_VERSION;
+  if (override !== undefined && override.trim().length > 0) return override.trim();
+  for (const rel of [
+    "../../package.json",       // vendor/context-mode/server.bundle.mjs → package root
+    "../package.json",          // upstream build/ layout
+    "./package.json",
+  ]) {
     const p = resolve(__pkg_dir, rel);
     if (existsSync(p)) {
       try { return JSON.parse(readFileSync(p, "utf8")).version; } catch {}
@@ -81,6 +96,20 @@ const VERSION: string = (() => {
   }
   return "unknown";
 })();
+
+/**
+ * Whether this build should check npm for a newer upstream release.
+ *
+ * This fork ships its own engine, so the published `context-mode` version is
+ * not a valid upgrade target: reporting it as "outdated" is noise, and the
+ * upgrade command it suggests would replace this build with a different
+ * engine. The check is therefore OFF by default and baked in at build time.
+ *
+ * Set `CONTEXT_MODE_UPSTREAM_CHECK=1` at runtime to re-enable it for an
+ * upstream-style deployment built from this source.
+ */
+const UPSTREAM_CHECK_ENABLED: boolean =
+  process.env.CONTEXT_MODE_UPSTREAM_CHECK === "1";
 
 function getPackageRoot(): string {
   return existsSync(resolve(__pkg_dir, "package.json")) ? __pkg_dir : dirname(__pkg_dir);
@@ -800,6 +829,7 @@ async function fetchLatestVersion(): Promise<string> {
 }
 
 function getUpgradeHint(): string {
+  if (!UPSTREAM_CHECK_ENABLED) return "upgrade dsh-context-mode";
   const name = _detectedAdapter?.name;
   if (name === "Claude Code") return "/ctx-upgrade";
   if (name === "OpenClaw") return "npm run install:openclaw";
@@ -818,6 +848,7 @@ function semverNewer(a: string, b: string): boolean {
 }
 
 function isOutdated(): boolean {
+  if (!UPSTREAM_CHECK_ENABLED) return false;
   if (!_latestVersion || _latestVersion === "unknown") return false;
   return semverNewer(_latestVersion, VERSION);
 }
@@ -4334,6 +4365,33 @@ server.registerTool(
     } catch { /* best effort — don't block upgrade */ }
 
 
+    // A self-contained fork upgrades itself, not the upstream npm package.
+    // Returning the upstream upgrade command here would replace this build
+    // with a different engine, so answer with the fork's own instructions.
+    if (!UPSTREAM_CHECK_ENABLED) {
+      return trackResponse("ctx_upgrade", {
+        content: [{
+          type: "text",
+          text: [
+            "## ctx-upgrade",
+            "",
+            "This build is self-contained: the engine is vendored and the package ships",
+            "its own bundle, so there is no upstream package to update.",
+            "",
+            "To upgrade, run this command with your shell tool and show the output as a checklist:",
+            "",
+            "```",
+            "npm install -g dsh-context-mode@latest",
+            "```",
+            "",
+            "Then tell the user to restart their DSH session so the new bundle is loaded.",
+            "",
+            `Current engine version: ${VERSION}`,
+          ].join("\n"),
+        }],
+      });
+    }
+
     let cmd: string;
 
     if (existsSync(bundlePath)) {
@@ -4952,11 +5010,14 @@ async function main() {
   // First fetch at startup, then refresh every hour so long-running sessions
   // (some users keep the MCP server alive 24h+) catch new releases without a
   // restart. `.unref()` lets the process exit normally on SIGTERM regardless
-  // of pending intervals.
-  fetchLatestVersion().then(v => { if (v !== "unknown") _latestVersion = v; });
-  setInterval(() => {
+  // of pending intervals. A self-contained fork skips the network check
+  // entirely: the published upstream version is not its upgrade target.
+  if (UPSTREAM_CHECK_ENABLED) {
     fetchLatestVersion().then(v => { if (v !== "unknown") _latestVersion = v; });
-  }, 60 * 60 * 1000).unref();
+    setInterval(() => {
+      fetchLatestVersion().then(v => { if (v !== "unknown") _latestVersion = v; });
+    }, 60 * 60 * 1000).unref();
+  }
 
   // Stats heartbeat — keep the statusline truthful while the user works in
   // tools other than MCP (Bash/Read/Edit during long sessions or post-/compact

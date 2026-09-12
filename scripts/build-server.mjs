@@ -11,13 +11,14 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const vendor = join(root, 'vendor', 'context-mode')
 const esbuild = join(vendor, 'node_modules', '.bin', 'esbuild')
+const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 
 if (!existsSync(join(vendor, 'src', 'server.ts'))) {
   console.error(`vendored sources are missing: ${join(vendor, 'src', 'server.ts')}`)
@@ -38,6 +39,10 @@ const args = [
   '--target=node18',
   '--format=esm',
   `--outfile=${join(vendor, 'server.bundle.mjs')}`,
+  // Bake the adapter version in so the engine reports the version of the
+  // package that actually ships it, instead of hunting for a package.json
+  // that a single-file bundle cannot reach.
+  '--define:process.env.CONTEXT_MODE_VERSION=' + JSON.stringify(version),
   '--external:better-sqlite3',
   '--external:turndown',
   '--external:turndown-plugin-gfm',
@@ -47,7 +52,7 @@ const args = [
 
 try {
   execFileSync(esbuild, args, { cwd: vendor, stdio: 'inherit' })
-  console.log('context-mode server bundle built at vendor/context-mode/server.bundle.mjs')
+  console.log(`context-mode server bundle built at vendor/context-mode/server.bundle.mjs (v${version})`)
 } catch (error) {
   console.error(`server bundle build failed: ${error instanceof Error ? error.message : String(error)}`)
   process.exit(1)
