@@ -8,7 +8,7 @@ import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
 import { __spillRecordsForTests, installOutputContainment } from '../lib/types/output-containment.js'
-import { classify, installPrecompactArchive, statesAConcreteValue } from '../lib/types/precompact.js'
+import { classify, installPrecompactArchive, isInjectedContext, statesAConcreteValue } from '../lib/types/precompact.js'
 import { isFloodingSegment, isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
 const storageDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-smoke-'))
@@ -215,6 +215,69 @@ try {
   assert.ok(archived[3].text.includes('上限为 5'), 'assistant prose stating a value is promoted to finding')
   assert.equal(statesAConcreteValue('我需要检查一下配置文件'), false, 'intent prose is not a finding')
   assert.equal(statesAConcreteValue('根因是连接池耗尽'), true, 'stated root cause is a finding')
+
+  // Harness-injected blocks ride on `user/message`, so they must be dropped by
+  // content rather than trusted as constraints.
+  assert.equal(
+    isInjectedContext('<current_runtime_context>\nworkspace-write\n</current_runtime_context>'),
+    true,
+    'runtime context block is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('<active_memory>\nuser: discard injected blocks\n</active_memory>'),
+    true,
+    'active memory block is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('  <system-reminder>\nskills changed\n</system-reminder>'),
+    true,
+    'system reminder block is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('<resume_snapshot>\nearlier turns\n</resume_snapshot>'),
+    true,
+    'resume snapshot block is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('请解释一下 <active_memory> 这个标签是干嘛的'),
+    false,
+    'a user quoting an injected tag mid-message is still archived',
+  )
+  assert.equal(isInjectedContext('不要用 Redis'), false, 'ordinary user text is not injected')
+
+  // `textOf` reads text blocks only, so a block's opening tag can be gone by
+  // the time the body reaches the classifier. The headings must still match.
+  assert.equal(
+    isInjectedContext('Current runtime context. This snapshot supersedes earlier runtime-context snapshots.'),
+    true,
+    'runtime context heading without its tag is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('The available skill catalog changed. This complete catalog replaces every earlier list.'),
+    true,
+    'skill catalog heading without its tag is recognized as injected',
+  )
+  assert.equal(
+    isInjectedContext('We discussed the current runtime context of this session.'),
+    false,
+    'the heading phrase mid-sentence does not disqualify a real message',
+  )
+
+  const filtered = classify([
+    { type: 'user/message', seq: 10, data: { content: '不要用 Redis' } },
+    { type: 'user/message', seq: 11, data: { content: '<active_memory>\nuser: 不要用 Redis\n</active_memory>' } },
+    { type: 'user/message', seq: 12, data: { content: '<current_runtime_context>\npolicy: ask\n</current_runtime_context>' } },
+  ])
+  assert.deepEqual(
+    filtered.map(line => line.layer),
+    ['constraint'],
+    'injected blocks never reach the constraint layer',
+  )
+  assert.ok(filtered[0].text.includes('不要用 Redis'), 'the genuine user message survives filtering')
+  assert.ok(
+    !filtered.some(line => line.text.includes('current_runtime_context')),
+    'no runtime snapshot text is archived',
+  )
 
   // Off by default only when disabled: the listener must not subscribe.
   const disabledDisposer = installPrecompactArchive(ctx, () => undefined, { enabled: false })

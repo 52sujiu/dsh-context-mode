@@ -14,13 +14,17 @@
  *
  *   - writes segment CJK runs into single characters separated by spaces,
  *     which makes `unicode61` emit one token per character;
- *   - queries segment identically and are joined as a phrase, so an adjacent
- *     query like "缓存方案" becomes the phrase `"缓 存 方 案"` and only
- *     matches documents where those characters appear adjacently.
+ *   - queries segment identically, so "缓存方案" becomes the tokens
+ *     `缓 存 方 案` and the searcher can match them.
  *
- * Phrase semantics matter: without the phrase the query would degrade to an
- * AND of single characters, matching any document that merely contains all of
- * them. See {@link buildCjkQuery}.
+ * The query side deliberately does NOT wrap the segmented run in a phrase.
+ * Phrase semantics were tried first and made retrieval worse: a document
+ * saying "缓存走本地文件" and a query saying "缓存方案用什么" share the
+ * prefix but diverge immediately, so an adjacency requirement rejects the
+ * result a caller actually wanted. Emitting single tokens instead lets
+ * upstream's `sanitizeQuery` build an AND expression, and BM25 ranks the
+ * document that shares more characters first, which is the ranking a
+ * character-based index can honestly provide. See {@link buildCjkQuery}.
  */
 /** Return whether a string contains any character that needs segmentation. */
 export declare function hasCjk(value: string): boolean;

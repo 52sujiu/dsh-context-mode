@@ -192,12 +192,47 @@ export function classify(events: readonly SessionEventLike[]): ArchivedLine[] {
   for (const event of events) {
     const text = textOf(event)
     if (text.length === 0) continue
+    if (isInjectedContext(text)) continue
     const layer = layerOf(event.type, text)
     if (layer === undefined) continue
     lines.push({ layer, text: `${heading(event, layer)}\n${text}` })
   }
   return lines
 }
+
+/**
+ * Whether a message body is harness-injected context rather than transcript.
+ *
+ * DSH attaches `<current_runtime_context>`, `<active_memory>`,
+ * `<system-reminder>`, and `<resume_snapshot>` blocks to user messages, so
+ * they arrive with the same `user/message` type as a genuine user turn. They
+ * are per-turn runtime noise, not requirements or decisions: filing them under
+ * `constraint` both dilutes that layer and returns stale policy snapshots for
+ * policy-shaped queries. `<active_memory>` is also a second-hand summary of
+ * events that are archived directly, so keeping it would store the same facts
+ * twice.
+ *
+ * The check has to cover two shapes. The tag form is what the model sees when
+ * a block is inlined whole, but `textOf` reads only the text blocks of a
+ * message, so a block's opening tag can be stripped before this point and the
+ * body then begins with the injected block's own heading — the transcripts
+ * this was written against start with "Current runtime context." rather than
+ * with a tag. Matching the headings as well keeps those from being filed.
+ *
+ * A body qualifies only when an injected marker *starts* the message, so a
+ * user who quotes one of these tags mid-sentence is still archived.
+ */
+export function isInjectedContext(text: string): boolean {
+  return INJECTED_CONTEXT_PATTERN.test(text)
+}
+
+const INJECTED_CONTEXT_PATTERN = new RegExp(
+  '^\\s*(?:' +
+    '<(?:current_runtime_context|active_memory|system-reminder|resume_snapshot)\\b' +
+    '|Current runtime context\\b' +
+    '|The available skill catalog changed\\b' +
+    ')',
+)
 
 /** Return the layer for one event, or undefined when it carries no transcript value. */
 function layerOf(type: string, text: string): LayerName | undefined {

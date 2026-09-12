@@ -92,6 +92,38 @@ only accepts its own platform ids, and `pi` is its neutral MCP-only id — every
 store stays DSH-owned: `CONTEXT_MODE_DIR` isolates DSH data and
 `CONTEXT_MODE_PROJECT_DIR` pins project hashing to the configured workspace.
 
+## Compaction archiving
+
+Compaction replaces the live conversation with a generated summary and prunes
+the events behind it, so anything the summary omits leaves the model's reach.
+The plugin listens for `compaction/start` and files the transcript into the
+knowledge base first, where `ctx_search` can still reach it afterwards.
+
+Storage is layered rather than filtered — every transcript event is archived,
+and the layers differ only in the `source` label they carry, so precision is
+chosen at query time instead of at write time:
+
+| Source | Contents |
+| --- | --- |
+| `session/<id>/constraint` | user messages — requirements, decisions, limits |
+| `session/<id>/finding` | tool results and assistant prose stating a concrete value |
+| `session/<id>/narrative` | remaining assistant prose — reasoning, plans |
+
+Nothing is dropped at write, so a misclassification costs a query's precision
+rather than the content itself. Harness-injected blocks (`<active_memory>`,
+`<current_runtime_context>`, `<system-reminder>`, `<resume_snapshot>`) are the
+one exception: they ride on `user/message`, are per-turn runtime noise rather
+than transcript, and are discarded before layering. Set `precompact: false` to
+turn archiving off entirely.
+
+Archives written before 0.3.2 may contain those injected blocks. A one-shot
+cleanup script removes them and leaves everything else alone:
+
+```sh
+node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path>            # report only
+node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path> --apply    # delete
+```
+
 ## Development
 
 ```sh

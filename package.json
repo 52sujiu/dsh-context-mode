@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",
@@ -29,6 +29,7 @@
   },
   "files": [
     "lib",
+    "scripts/cleanup-injected.mjs",
     "skills",
     "vendor/context-mode/server.bundle.mjs",
     "vendor/context-mode/LICENSE",
