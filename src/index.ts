@@ -16,6 +16,8 @@ import type { JsonSchemaNode, ToolDefinition, ToolRuntime } from '@deepseek-ai/d
 import type { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import z from '@deepseek-ai/schemastery'
 import { McpStdioClient, type McpCallResult, type McpTool } from './mcp-client.js'
+import { installBashRoutingGuard } from './routing.js'
+import { installSessionMemory } from './session-memory.js'
 
 export const name = 'dsh-context-mode'
 
@@ -98,9 +100,13 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   let client: McpStdioClient | undefined
   ctx.effect(() => () => {
     disposed = true
-    for (const dispose of disposers.splice(0)) dispose()
     client?.shutdown()
+    for (const dispose of disposers.splice(0)) dispose()
   }, 'dsh-context-mode MCP bridge')
+  const routingDisposer = installBashRoutingGuard(tools)
+  disposers.push(routingDisposer)
+  const memoryDisposer = installSessionMemory(ctx)
+  disposers.push(memoryDisposer)
   const skillDisposer = registerBundledSkill(ctx)
   if (skillDisposer !== undefined) disposers.push(skillDisposer)
 
@@ -122,6 +128,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     bridge.start()
     await bridge.initialize(resolved.handshakeTimeoutMs)
     const catalog = await bridge.listTools(resolved.handshakeTimeoutMs)
+    const systemPrompt = ctx.get('systemPrompt', false) as SystemPrompt | undefined
     for (const tool of catalog) {
       if (disposed) return
       try {
@@ -131,12 +138,13 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       }
     }
     if (disposers.length > 0) {
-      const systemPrompt = ctx.get('systemPrompt', false) as SystemPrompt | undefined
-      systemPrompt?.section({
-        name: 'dsh-context-mode:routing',
-        order: systemPrompt.getSectionOrder('TOOL_CORDIS'),
-        text: ({ scope }) => ctx.tools.get('ctx_execute', scope) === undefined ? '' : ROUTING_TEXT,
-      })
+      if (systemPrompt !== undefined) {
+        disposers.push(systemPrompt.section({
+          name: 'dsh-context-mode:routing',
+          order: systemPrompt.getSectionOrder('TOOL_CORDIS'),
+          text: ({ scope }) => tools.get('ctx_execute', scope) === undefined ? '' : ROUTING_TEXT,
+        }))
+      }
     }
     ctx.logger.info(`dsh-context-mode: registered ${disposers.length} context-mode tools`)
   } catch (error) {

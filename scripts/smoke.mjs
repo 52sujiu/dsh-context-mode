@@ -7,6 +7,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
+import { isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
 const storageDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-smoke-'))
 const ctx = new Context()
@@ -45,6 +46,46 @@ try {
   assert.ok(names.includes('ctx_execute'), 'ctx_execute is registered')
   assert.ok(names.includes('ctx_search'), 'ctx_search is registered')
   assert.equal(names.filter(name => name.startsWith('ctx_')).length, 11, 'all context-mode tools are registered')
+
+  assert.equal(stripQuotedContent("gh issue list --search 'curl wget'").includes('curl'), false, 'quoted routing text is ignored')
+  assert.equal(isSafeCurlWget('curl -s -o /tmp/context-mode.json https://example.com'), true, 'silent file curl remains available')
+  assert.equal(isSafeCurlWget('curl https://example.com'), false, 'stdout curl is rejected')
+
+  const unregisterBash = tools.register({
+    name: 'bash',
+    description: 'smoke-test shell',
+    parameters: {
+      type: 'object',
+      properties: { command: { type: 'string' } },
+      required: ['command'],
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    execute: async () => 'executed',
+  })
+  const blocked = await tools.execute({
+    callId: 'dsh-context-mode-routing-smoke',
+    name: 'bash',
+    arguments: { command: 'curl https://example.com' },
+    signal: new AbortController().signal,
+  })
+  assert.equal(blocked.isError, true, 'unsafe bash routing is blocked')
+  unregisterBash()
+
+  const assembly = await ctx.get('systemPrompt').assemble({
+    agent: {
+      session: {
+        snapshotEvents: () => [
+          { type: 'user/message', seq: 0, data: { content: 'retain this decision', source: { kind: 'user' } } },
+          { type: 'tool/call', seq: 1, data: { name: 'ctx_execute' } },
+        ],
+      },
+    },
+  })
+  const memory = assembly.contexts.find(context => context.name === 'dsh-context-mode:active-memory')
+  assert.ok(memory?.text.includes('retain this decision'), 'active session memory is injected')
 
   const skills = ctx.get('skills')
   assert.ok(skills, 'skills service is mounted')
