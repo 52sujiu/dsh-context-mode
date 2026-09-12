@@ -1,34 +1,26 @@
 /**
- * Example dsh-TUI ecosystem plugin: per-session turn counters.
+ * dsh-context-mode: expose context-mode's MCP tools as native DSH tools.
  *
- * Demonstrates the full runtime-plugin contract:
- * - `name` / `Config` (type) / `Config` (schema) / `apply`, no default export;
- * - consuming the durable session stream (`session/event`, `session/disposed`);
- * - appending a log-only session event (`example/turn`) with mandatory type
- *   registration (see `./registration.ts`) and typed `SessionEventMap` merge
- *   (see `./events.ts`);
- * - the optional host-provided TUI prompt slot seam (`ctx.tuiPrompt`): when a
- *   TUI host provides it, `${example}` becomes available in `theme.leftPrompt`;
- * - schema defaults + `??` fallbacks so the plugin degrades to a no-op instead
- *   of failing boot.
- *
- * Follow the core guide for the full seam catalogue and rules:
- * https://github.com/ccch1mneyyy/dsh-TUI/blob/main/docs/plugins.md
- * @module @dsh-tui-ecosystem/example-plugin
+ * The upstream context-mode package remains the source of truth for sandboxed
+ * execution, indexing, search, and session accounting. This package supplies
+ * the DSH Cordis adapter and keeps the MCP child isolated from the TUI process.
  */
 import type { Context } from '@deepseek-ai/cordis';
-export type * from './events.js';
-export declare const name = "example-plugin";
-/** Configurable knobs; every key has a sane default. */
-export type Config = {
-    /** Register the `${example}` TUI prompt slot when a TUI host provides one. */
-    slot?: boolean;
-};
+export declare const name = "dsh-context-mode";
+/** Configuration for the context-mode MCP bridge. */
+export interface Config {
+    /** Whether to start context-mode and register its tools. */
+    enabled?: boolean;
+    /** Optional absolute or cwd-relative path to a context-mode server bundle. */
+    serverPath?: string;
+    /** Workspace used for context-mode project isolation. */
+    projectDir?: string;
+    /** Root for context-mode's session and content databases. */
+    storageDir?: string;
+    /** Timeout for the MCP initialize and tools/list handshake. */
+    handshakeTimeoutMs?: number;
+}
 export declare const Config: Schemastery<Config>;
-/**
- * Wire the example plugin.
- * @param ctx - Cordis context (session services composed).
- * @param config - Validated plugin config (schema defaults applied).
- */
-export declare function apply(ctx: Context, config?: Config): void;
+/** Register the plugin and bridge context-mode's MCP tool catalog into DSH. */
+export declare function apply(ctx: Context, config?: Config): Promise<void>;
 //# sourceMappingURL=index.d.ts.map

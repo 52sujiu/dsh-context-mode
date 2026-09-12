@@ -1,10 +1,9 @@
-# Bundle patch for the example plugin: insert the plugin as a profile row.
-#
-# Override rows (no `insert`) replace the target row's WHOLE `config` — restate
-# every key the row owns. New rows go inside `insert`; never re-mount service
-# rows the dsh-base layer already provides.
+# dsh-context-mode bundle patch.
+# The row-level inject guarantees the two optional DSH services are mounted
+# before the adapter discovers and registers context-mode tools.
 - insert:
-    - id: example-plugin
-      name: '@dsh-tui-ecosystem/example-plugin'
+    - id: dsh-context-mode
+      name: 'dsh-context-mode'
+      inject: [tools, systemPrompt]
       config:
-        slot: true
+        enabled: true
