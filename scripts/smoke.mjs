@@ -106,6 +106,8 @@ try {
     'npm install left-pad',
     'cd /tmp',
     'pwd',
+    'ls',
+    'ls -la',
     'echo hello',
     'kill 1234',
     'npm test > /tmp/test.log',
