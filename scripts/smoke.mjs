@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
+import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
 
 const storageDir = mkdtempSync(join(tmpdir(), 'dsh-context-mode-smoke-'))
@@ -26,6 +27,10 @@ try {
   fibers.push(toolsFiber)
   await toolsFiber.await()
 
+  const skillsFiber = ctx.plugin(Skills)
+  fibers.push(skillsFiber)
+  await skillsFiber.await()
+
   const bridgeFiber = ctx.plugin(plugin, {
     projectDir: process.cwd(),
     storageDir,
@@ -41,6 +46,10 @@ try {
   assert.ok(names.includes('ctx_search'), 'ctx_search is registered')
   assert.equal(names.filter(name => name.startsWith('ctx_')).length, 11, 'all context-mode tools are registered')
 
+  const skills = ctx.get('skills')
+  assert.ok(skills, 'skills service is mounted')
+  assert.ok((await skills.list()).some(skill => skill.name === 'context-mode'), 'bundled context-mode skill is registered')
+
   const result = await tools.execute({
     callId: 'dsh-context-mode-smoke',
     name: 'ctx_execute',
@@ -52,6 +61,7 @@ try {
 
   await bridgeFiber.dispose()
   assert.equal(tools.get('ctx_execute'), undefined, 'disposing the plugin unregisters its tools')
+  assert.equal((await skills.list()).find(skill => skill.name === 'context-mode'), undefined, 'disposing the plugin unregisters its skill')
   console.log('dsh-context-mode smoke passed')
 } finally {
   for (const fiber of fibers.reverse()) {

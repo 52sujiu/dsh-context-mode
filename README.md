@@ -21,6 +21,12 @@ row as well:
 dsh plugin --profile dsh-tui remove dsh-context-mode
 ```
 
+The npm package is installed as a dependency in the DSH profile. DSH does not
+copy packages into a global `plugins/` directory. The bundled
+`skills/context-mode/SKILL.md` is registered with DSH's skill registry when the
+profile provides the `skills` service, so it should appear in `/skills` after a
+restart; the file itself remains inside the installed npm package.
+
 ## Configuration
 
 The default patch starts the bridge with:
