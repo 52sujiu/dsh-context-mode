@@ -59,7 +59,7 @@ MCP `initialize` and `tools/list`, registers each returned tool through the DSH
 tool registry, and forwards every call over MCP stdio. The child is terminated
 when the Cordis plugin is disposed.
 
-The adapter injects active memory from DSH's durable Session log into the next model assembly. DSH remains the source of truth for session recovery and compaction continuity; context-mode's hook-specific SessionDB analytics are not duplicated by this wrapper.
+Context-mode analysis, indexing, search, and diagnostics tools are marked concurrency-safe so independent model tool calls may overlap. `ctx_insight`, `ctx_purge`, and `ctx_upgrade` remain exclusive because they open external UI or mutate installation and stored data.
 
 The bridge sets `CONTEXT_MODE_PLATFORM=pi` for compatibility with context-mode's
 existing adapter defaults, while `CONTEXT_MODE_DIR` keeps DSH data separate from

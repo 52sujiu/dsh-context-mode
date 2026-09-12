@@ -8,6 +8,7 @@ interface SessionEventLike {
 }
 
 interface SessionLike {
+  readonly seq?: number
   snapshotEvents(): readonly SessionEventLike[]
 }
 
@@ -23,6 +24,8 @@ interface PromptContextLike {
 interface MemoryState {
   readonly session: SessionLike
   summarySeq?: number
+  lastSeq?: number
+  rendered?: string
 }
 
 const CONTEXT_NAME = 'dsh-context-mode:active-memory'
@@ -56,8 +59,13 @@ function buildMemory(scope: unknown, states: WeakMap<object, MemoryState>): stri
   }
 
   const events = session.snapshotEvents()
+  const currentSeq = typeof session.seq === 'number'
+    ? session.seq
+    : (events.at(-1)?.seq ?? -1) + 1
+  if (state.rendered !== undefined && state.lastSeq === currentSeq) return state.rendered
+
   const lines: string[] = []
-  const summary = [...events].reverse().find(event => event.type === 'compaction/summary')
+  const summary = events.findLast(event => event.type === 'compaction/summary')
   if (summary !== undefined && summary.seq !== state.summarySeq) {
     const text = summaryText(summary.data)
     if (text.length > 0) lines.push(`<resume_snapshot>\n${text}\n</resume_snapshot>`)
@@ -69,10 +77,17 @@ function buildMemory(scope: unknown, states: WeakMap<object, MemoryState>): stri
     const line = memoryLine(event)
     if (line !== undefined) lines.push(line)
   }
-  if (lines.length === 0) return ''
+  if (lines.length === 0) {
+    state = { ...state, lastSeq: currentSeq, rendered: '' }
+    states.set(key, state)
+    return ''
+  }
   let text = lines.join('\n')
   if (text.length > MAX_MEMORY_LENGTH) text = text.slice(text.length - MAX_MEMORY_LENGTH)
-  return `<active_memory>\n${text}\n</active_memory>`
+  const rendered = `<active_memory>\n${text}\n</active_memory>`
+  state = { ...state, lastSeq: currentSeq, rendered }
+  states.set(key, state)
+  return rendered
 }
 
 function sessionFromScope(scope: unknown): SessionLike | undefined {

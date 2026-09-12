@@ -46,6 +46,19 @@ try {
   assert.ok(names.includes('ctx_execute'), 'ctx_execute is registered')
   assert.ok(names.includes('ctx_search'), 'ctx_search is registered')
   assert.equal(names.filter(name => name.startsWith('ctx_')).length, 11, 'all context-mode tools are registered')
+  const schedulingSignal = new AbortController().signal
+  assert.equal(tools.executionMode({
+    callId: 'dsh-context-mode-parallel-smoke',
+    name: 'ctx_execute',
+    arguments: { language: 'javascript', code: 'console.log(1)' },
+    signal: schedulingSignal,
+  }).kind, 'parallel', 'ctx_execute permits parallel scheduling')
+  assert.equal(tools.executionMode({
+    callId: 'dsh-context-mode-exclusive-smoke',
+    name: 'ctx_purge',
+    arguments: {},
+    signal: schedulingSignal,
+  }).kind, 'exclusive', 'ctx_purge remains exclusive')
 
   assert.equal(stripQuotedContent("gh issue list --search 'curl wget'").includes('curl'), false, 'quoted routing text is ignored')
   assert.equal(isSafeCurlWget('curl -s -o /tmp/context-mode.json https://example.com'), true, 'silent file curl remains available')

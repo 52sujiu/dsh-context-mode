@@ -70,6 +70,12 @@ interface SkillRegistryLike {
   }): () => void
 }
 
+const EXCLUSIVE_CONTEXT_TOOLS = new Set([
+  'ctx_insight',
+  'ctx_purge',
+  'ctx_upgrade',
+])
+
 const BUNDLED_SKILL = {
   name: 'context-mode',
   description: 'Use context-mode tools for bounded code execution, indexing, and retrieval.',
@@ -186,7 +192,7 @@ function toDefinition(tool: McpTool, client: McpStdioClient): ToolDefinition {
       if (result.isError) throw new Error(text || `${tool.name} returned an error`)
       return { text }
     },
-    isConcurrencySafe: () => false,
+    isConcurrencySafe: () => !EXCLUSIVE_CONTEXT_TOOLS.has(tool.name),
   }
 }
 
