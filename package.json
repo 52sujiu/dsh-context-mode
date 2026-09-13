@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",
@@ -46,7 +46,8 @@
     "build": "tsc -p tsconfig.json",
     "build:server": "node scripts/build-server.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "verify": "pnpm build && pnpm build:server && pnpm smoke",
+    "test": "node --test scripts/verify-session-memory.mjs",
+    "verify": "pnpm build && pnpm build:server && pnpm smoke && pnpm test",
     "clean": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\""
   },
   "dsh": {

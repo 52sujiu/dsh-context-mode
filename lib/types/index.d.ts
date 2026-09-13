@@ -26,6 +26,7 @@ export interface Config {
     precompact?: boolean;
 }
 export declare const Config: Schemastery<Config>;
+export declare const ROUTING_TEXT: string;
 /** Register the plugin and bridge context-mode's MCP tool catalog into DSH. */
 export declare function apply(ctx: Context, config?: Config): Promise<void>;
 //# sourceMappingURL=index.d.ts.map

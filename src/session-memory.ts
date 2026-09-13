@@ -9,6 +9,7 @@ interface SessionEventLike {
 
 interface SessionLike {
   readonly seq?: number
+  readonly id?: unknown
   snapshotEvents(): readonly SessionEventLike[]
 }
 
@@ -23,7 +24,6 @@ interface PromptContextLike {
 
 interface MemoryState {
   readonly session: SessionLike
-  summarySeq?: number
   lastSeq?: number
   rendered?: string
 }
@@ -66,12 +66,8 @@ function buildMemory(scope: unknown, states: WeakMap<object, MemoryState>): stri
 
   const lines: string[] = []
   const summary = events.findLast(event => event.type === 'compaction/summary')
-  if (summary !== undefined && summary.seq !== state.summarySeq) {
-    const text = summaryText(summary.data)
-    if (text.length > 0) lines.push(`<resume_snapshot>\n${text}\n</resume_snapshot>`)
-    state = { ...state, summarySeq: summary.seq }
-    states.set(key, state)
-  }
+  const navigation = summary === undefined ? undefined : navigationText(session, summary)
+  if (navigation !== undefined) lines.push(navigation)
 
   for (const event of events.slice(-MAX_EVENTS)) {
     const line = memoryLine(event)
@@ -82,12 +78,36 @@ function buildMemory(scope: unknown, states: WeakMap<object, MemoryState>): stri
     states.set(key, state)
     return ''
   }
-  let text = lines.join('\n')
-  if (text.length > MAX_MEMORY_LENGTH) text = text.slice(text.length - MAX_MEMORY_LENGTH)
-  const rendered = `<active_memory>\n${text}\n</active_memory>`
+  const rendered = wrap(fitLines(lines))
   state = { ...state, lastSeq: currentSeq, rendered }
   states.set(key, state)
   return rendered
+}
+
+/** Tag overhead of the surrounding `<active_memory>` envelope, in characters. */
+const ENVELOPE_OVERHEAD = '<active_memory>\n\n</active_memory>'.length
+
+function wrap(body: string): string {
+  return `<active_memory>\n${body}\n</active_memory>`
+}
+
+/**
+ * Join the memory lines under the budget, counting the envelope.
+ *
+ * The navigation block is a fixed-size pointer, not conversation content, so it
+ * is never truncated: it stays intact and the recent-event lines below it
+ * absorb the trimming instead. Trimming keeps the newest events (the tail),
+ * which is what a running record is for.
+ */
+function fitLines(lines: readonly string[]): string {
+  const text = lines.join('\n')
+  const budget = MAX_MEMORY_LENGTH - ENVELOPE_OVERHEAD
+  if (text.length <= budget) return text
+  const [head, ...rest] = lines
+  const remaining = budget - head.length - 1
+  if (remaining <= 0) return head
+  const body = rest.join('\n')
+  return `${head}\n${body.slice(body.length - remaining)}`
 }
 
 function sessionFromScope(scope: unknown): SessionLike | undefined {
@@ -120,17 +140,29 @@ function memoryLine(event: SessionEventLike): string | undefined {
   return undefined
 }
 
-function summaryText(data: unknown): string {
-  if (data === null || typeof data !== 'object') return ''
-  const summary = (data as { summary?: unknown }).summary
-  if (!Array.isArray(summary)) return ''
-  return summary
-    .map(block => block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string'
-      ? (block as { text: string }).text
-      : '')
-    .filter(Boolean)
-    .join('\n')
-    .slice(0, MAX_MEMORY_LENGTH)
+/**
+ * Build the pointer that tells the model a compaction happened and where the
+ * archived detail lives.
+ *
+ * The summary body is NOT inlined. A full summary runs to tens of thousands of
+ * characters, far past this context's budget, so inlining it can only ever
+ * deliver a truncated fragment with its own delimiters clipped off. The archive
+ * already holds the complete text under stable `source` labels; the useful
+ * thing to inject is the address, which stays small enough to never be cut.
+ */
+function navigationText(session: SessionLike, summary: SessionEventLike): string | undefined {
+  const id = session.id
+  if (typeof id !== 'string' || id.length === 0) return undefined
+  const root = `session/${id}`
+  return [
+    `<resume_snapshot seq="${summary.seq}">`,
+    'Compacted turns are archived; nothing is inlined here. Retrieve on demand, scoping ctx_search by source:',
+    `  ${root}/constraint  user requirements and decisions`,
+    `  ${root}/finding     tool results and stated conclusions`,
+    `  ${root}/narrative   assistant reasoning and plans`,
+    'Query a concrete token (a path, a command, an error string), not a paraphrase.',
+    '</resume_snapshot>',
+  ].join('\n')
 }
 
 function extractText(data: unknown): string {
