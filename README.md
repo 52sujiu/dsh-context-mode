@@ -124,7 +124,7 @@ node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path>     
 node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path> --apply    # delete
 ```
 
-## Checkpoint archive index
+## Checkpoint transcript and archive index
 
 A checkpoint keeps only a summary of the span it replaces, and the shipped
 checkpoint format has no section for tool output — a long tool result survives
@@ -133,12 +133,36 @@ same span into the knowledge base beforehand, but nothing told the model so,
 and a summary that omits a detail reads as if the detail never existed.
 
 This package also exports a compaction engine that closes that gap. It extends
-the shipped `BasicCompactionEngine` and overrides only `summarize()`, appending
-an `## Archive Index` that names the archived sources:
+the shipped `BasicCompactionEngine` and replaces the lossy summary with the
+conversation itself, plus a pointer to everything it did not carry:
 
 ```ts
 import DshContextModeCompaction from 'dsh-context-mode/compaction'
 ```
+
+Each checkpoint it writes carries three parts:
+
+| Part | Content |
+| --- | --- |
+| The shipped summary | The eight-section checkpoint, unchanged |
+| `## Conversation Transcript` | user turns kept whole; assistant replies kept head+tail; tool output reduced to one index line each |
+| `## Archive Index` | The `source` labels to search, and how to query them |
+
+Every region that was clipped or dropped leaves a pointer naming the `source`
+holding the original and the `seq` it came from, so the checkpoint says *which*
+event lost detail rather than merely that an archive exists:
+
+```
+## [assistant 447]
+… first 200 chars …
+[... 1581 of 1981 chars elided from seq 447; retrieve with ctx_search(source: "session/<id>/narrative") ...]
+… last 200 chars …
+
+## [tool ctx_execute seq 3424, 29808 chars → search `session/<id>/finding`]
+```
+
+A prior checkpoint is never transcribed forward: its text is already in the
+summary, and copying it would grow the transcript on every compaction.
 
 Mount it in place of the shipped backend, inside the isolate group the shipped
 one requires:
@@ -153,18 +177,26 @@ one requires:
   config:
     - id: compaction-basic
       name: 'dsh-context-mode/compaction'   # was @deepseek-ai/dsh-compaction-basic
+      config:
+        thresholdRatio: 0.8   # compact at 80% of the window
+        retainRatio: 0.1      # keep the newest 10% verbatim
 
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
 ```
 
-Trigger policy, retention, the transaction bracket, token metering, and
-prefix-cache-aligned replay all stay on the shipped engine — only the returned
-summary text differs. The index is appended to the summary rather than injected
-into the summarization instruction, so the shipped output contract is untouched
-and no model has to follow an amended format. Failing to build the index
-returns the superseded summary unchanged, and restoring the shipped `name` row
-disables the index entirely.
+Only `compactRegion` (to capture the span) and `summarize` (to append) differ:
+trigger policy, retention, the transaction bracket, token metering, and
+prefix-cache-aligned replay all stay on the shipped engine. The appendices are
+added to the returned summary rather than injected into the summarization
+instruction, so the shipped output contract is untouched and no model has to
+follow an amended format. Failing to build them returns the superseded summary
+unchanged, and restoring the shipped `name` row disables them entirely.
+
+`TRANSCRIPT` and per-entry clipping are tunable from
+`dsh-context-mode/transcript`: `USER_CLIP_AT` / `USER_CLIP_KEEP` for long user
+turns, `ASSISTANT_KEEP` for assistant head+tail, and `MAX_TRANSCRIPT_CHARS` for
+the whole body.
 
 ## Development
 

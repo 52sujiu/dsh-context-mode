@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",
@@ -27,6 +27,10 @@
     "./compaction": {
       "types": "./lib/types/compaction.d.ts",
       "import": "./lib/types/compaction.js"
+    },
+    "./transcript": {
+      "types": "./lib/types/transcript.d.ts",
+      "import": "./lib/types/transcript.js"
     },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"

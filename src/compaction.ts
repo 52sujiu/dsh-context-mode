@@ -32,6 +32,12 @@
  */
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
+import {
+  MAX_TRANSCRIPT_CHARS,
+  buildTranscript,
+  renderTranscript,
+  type TranscriptEventLike,
+} from './transcript.js'
 
 /**
  * The shipped summarization input and result types, derived from the base
@@ -61,10 +67,20 @@ interface SessionEventLike {
 interface SessionLike {
   readonly id?: string
   snapshotEvents(): readonly SessionEventLike[]
+  /** Current surface node sequence; the compacted span is a slice of it. */
+  readonly surface?: { readonly nodes: readonly number[] }
+  /** One event by sequence number, or undefined when absent. */
+  eventAt?(seq: number): SessionEventLike | undefined
 }
 
 interface AgentLike {
   readonly session?: SessionLike
+}
+
+/** The inclusive surface range currently being compacted. */
+interface CompactRange {
+  readonly start: number
+  readonly end: number
 }
 
 /**
@@ -75,11 +91,33 @@ interface AgentLike {
  */
 export class DshContextModeCompaction extends BasicCompactionEngine {
   /**
-   * Summarize the replayed region, then append the archive index.
+   * Surface range of the compaction in flight.
    *
-   * The index is appended after `super.summarize()` resolves, so the shipped
-   * call — and therefore prefix-cache alignment, token accounting, and the
-   * returned `SummaryResult` envelope — are unchanged.
+   * `summarize()` receives only the replayed messages, not the sequence
+   * numbers behind them, so the range is captured here — at the one seam that
+   * knows it — and read back inside `summarize()`. Only two numbers are
+   * stashed; the shipped transaction, selection, and validation are untouched.
+   */
+  #range: CompactRange | undefined
+
+  /** Capture the compacted range for the summarizer, then run the shipped path. */
+  override async compactRegion(
+    ...args: Parameters<BasicCompactionEngine['compactRegion']>
+  ): ReturnType<BasicCompactionEngine['compactRegion']> {
+    this.#range = { start: args[0], end: args[1] }
+    try {
+      return await super.compactRegion(...args)
+    } finally {
+      // Cleared unconditionally: a stale range must never label a later summary.
+      this.#range = undefined
+    }
+  }
+
+  /**
+   * Summarize the replayed region, then append the transcript and archive index.
+   *
+   * The shipped call runs first and unmodified, so prefix-cache alignment,
+   * token accounting, and the returned `SummaryResult` envelope are unchanged.
    */
   protected override async summarize(
     input: SummarizeArgs[0],
@@ -88,15 +126,69 @@ export class DshContextModeCompaction extends BasicCompactionEngine {
   ): Promise<SummarizedResult> {
     const result = await super.summarize(input, agent, signal)
     try {
-      const index = buildArchiveIndex(agent as AgentLike)
-      if (index.length === 0) return result
-      return { ...result, summary: appendToSummary(result.summary, index) }
+      const session = (agent as AgentLike).session
+      const base = archiveBase(session)
+      if (base === undefined) return result
+      const appended = buildAppendices(session, this.#range, base)
+      if (appended.length === 0) return result
+      return { ...result, summary: appendToSummary(result.summary, appended.join('\n\n')) }
     } catch {
-      // An index is an improvement, never a requirement: a failure here must
+      // An appendix is an improvement, never a requirement: a failure here must
       // not turn into a failed compaction.
       return result
     }
   }
+}
+
+/** Archive source root for one session, or undefined when it cannot be named. */
+function archiveBase(session: SessionLike | undefined): string | undefined {
+  const id = session?.id
+  if (typeof id !== 'string' || id.length === 0) return undefined
+  return `session/${id}`
+}
+
+/**
+ * Build the transcript and index blocks appended below the summary.
+ *
+ * The compacted events are resolved from the captured range against the
+ * session's own surface, so a range that no longer matches yields no
+ * transcript rather than a mislabelled one.
+ */
+function buildAppendices(
+  session: SessionLike | undefined,
+  range: CompactRange | undefined,
+  base: string,
+): string[] {
+  const blocks: string[] = []
+  const events = compactedEvents(session, range)
+  if (events.length > 0) {
+    const lines = buildTranscript(events, { base })
+    const body = renderTranscript(lines, MAX_TRANSCRIPT_CHARS)
+    if (body.length > 0) blocks.push(`## Conversation Transcript\n\n${body}`)
+  }
+  const index = buildArchiveIndexFromBase(base)
+  if (index.length > 0) blocks.push(index)
+  return blocks
+}
+
+/** Resolve the compacted events for a captured surface range. */
+function compactedEvents(
+  session: SessionLike | undefined,
+  range: CompactRange | undefined,
+): TranscriptEventLike[] {
+  if (session === undefined) return []
+  const eventAt = session.eventAt
+  const nodes = session.surface?.nodes
+  // Without a range or a live surface, fall back to nothing rather than
+  // guessing: a transcript of the wrong span is worse than no transcript.
+  if (range === undefined || eventAt === undefined || nodes === undefined) return []
+  const out: TranscriptEventLike[] = []
+  for (const seq of nodes) {
+    if (seq < range.start || seq > range.end) continue
+    const event = eventAt.call(session, seq)
+    if (event !== undefined) out.push(event)
+  }
+  return out
 }
 
 /**
@@ -111,12 +203,17 @@ export class DshContextModeCompaction extends BasicCompactionEngine {
  * @returns the markdown block, or an empty string when no session is reachable.
  */
 export function buildArchiveIndex(agent: AgentLike): string {
-  const session = agent.session
-  if (session === undefined) return ''
-  const id = session.id
-  if (typeof id !== 'string' || id.length === 0) return ''
+  const base = archiveBase(agent.session)
+  return base === undefined ? '' : buildArchiveIndexFromBase(base)
+}
 
-  const base = `session/${id}`
+/**
+ * Build the archive-index block for one archive source root.
+ *
+ * @param base - archive source root, e.g. `session/<id>`.
+ * @returns the markdown block.
+ */
+export function buildArchiveIndexFromBase(base: string): string {
   const lines = [
     INDEX_HEADING,
     '',

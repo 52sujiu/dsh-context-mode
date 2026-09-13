@@ -52,6 +52,12 @@ interface SessionEventLike {
 interface SessionLike {
     readonly id?: string;
     snapshotEvents(): readonly SessionEventLike[];
+    /** Current surface node sequence; the compacted span is a slice of it. */
+    readonly surface?: {
+        readonly nodes: readonly number[];
+    };
+    /** One event by sequence number, or undefined when absent. */
+    eventAt?(seq: number): SessionEventLike | undefined;
 }
 interface AgentLike {
     readonly session?: SessionLike;
@@ -63,12 +69,14 @@ interface AgentLike {
  * that mounts it needs no additional wiring.
  */
 export declare class DshContextModeCompaction extends BasicCompactionEngine {
+    #private;
+    /** Capture the compacted range for the summarizer, then run the shipped path. */
+    compactRegion(...args: Parameters<BasicCompactionEngine['compactRegion']>): ReturnType<BasicCompactionEngine['compactRegion']>;
     /**
-     * Summarize the replayed region, then append the archive index.
+     * Summarize the replayed region, then append the transcript and archive index.
      *
-     * The index is appended after `super.summarize()` resolves, so the shipped
-     * call — and therefore prefix-cache alignment, token accounting, and the
-     * returned `SummaryResult` envelope — are unchanged.
+     * The shipped call runs first and unmodified, so prefix-cache alignment,
+     * token accounting, and the returned `SummaryResult` envelope are unchanged.
      */
     protected summarize(input: SummarizeArgs[0], agent: SummarizeArgs[1], signal?: SummarizeArgs[2]): Promise<SummarizedResult>;
 }
@@ -84,6 +92,13 @@ export declare class DshContextModeCompaction extends BasicCompactionEngine {
  * @returns the markdown block, or an empty string when no session is reachable.
  */
 export declare function buildArchiveIndex(agent: AgentLike): string;
+/**
+ * Build the archive-index block for one archive source root.
+ *
+ * @param base - archive source root, e.g. `session/<id>`.
+ * @returns the markdown block.
+ */
+export declare function buildArchiveIndexFromBase(base: string): string;
 /**
  * Append an index block to the text of a summary.
  *
