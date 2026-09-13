@@ -132,71 +132,20 @@ only as whatever the summarizing model chose to keep. `precompact` files that
 same span into the knowledge base beforehand, but nothing told the model so,
 and a summary that omits a detail reads as if the detail never existed.
 
-This package also exports a compaction engine that closes that gap. It extends
-the shipped `BasicCompactionEngine` and replaces the lossy summary with the
-conversation itself, plus a pointer to everything it did not carry:
+Closing that gap is a **separate product**, not part of this package:
 
-```ts
-import DshContextModeCompaction from 'dsh-context-mode/compaction'
+```sh
+npm install dsh-context-mode-compaction
+npx dsh-context-mode-compaction
 ```
 
-Each checkpoint it writes carries three parts:
+`dsh-context-mode-compaction` supplies the compaction engine that writes the
+transcript and the index; this package supplies the archiver that stores what
+those pointers name, and the `ctx_search` tool that reads it back. The two are
+independent — install both for the full path.
 
-| Part | Content |
-| --- | --- |
-| The shipped summary | The eight-section checkpoint, unchanged |
-| `## Conversation Transcript` | user turns kept whole; assistant replies kept head+tail; tool output reduced to one index line each |
-| `## Archive Index` | The `source` labels to search, and how to query them |
-
-Every region that was clipped or dropped leaves a pointer naming the `source`
-holding the original and the `seq` it came from, so the checkpoint says *which*
-event lost detail rather than merely that an archive exists:
-
-```
-## [assistant 447]
-… first 200 chars …
-[... 1581 of 1981 chars elided from seq 447; retrieve with ctx_search(source: "session/<id>/narrative") ...]
-… last 200 chars …
-
-## [tool ctx_execute seq 3424, 29808 chars → search `session/<id>/finding`]
-```
-
-A prior checkpoint is never transcribed forward: its text is already in the
-summary, and copying it would grow the transcript on every compaction.
-
-Mount it in place of the shipped backend, inside the isolate group the shipped
-one requires:
-
-```yaml
-- id: compaction
-  name: cordis:group
-  group: true
-  isolate:
-    compaction: true
-    toolResultPruner: true
-  config:
-    - id: compaction-basic
-      name: 'dsh-context-mode/compaction'   # was @deepseek-ai/dsh-compaction-basic
-      config:
-        thresholdRatio: 0.8   # compact at 80% of the window
-        retainRatio: 0.1      # keep the newest 10% verbatim
-
-    - id: command-compact
-      name: '@deepseek-ai/dsh-command-compact'
-```
-
-Only `compactRegion` (to capture the span) and `summarize` (to append) differ:
-trigger policy, retention, the transaction bracket, token metering, and
-prefix-cache-aligned replay all stay on the shipped engine. The appendices are
-added to the returned summary rather than injected into the summarization
-instruction, so the shipped output contract is untouched and no model has to
-follow an amended format. Failing to build them returns the superseded summary
-unchanged, and restoring the shipped `name` row disables them entirely.
-
-`TRANSCRIPT` and per-entry clipping are tunable from
-`dsh-context-mode/transcript`: `USER_CLIP_AT` / `USER_CLIP_KEEP` for long user
-turns, `ASSISTANT_KEEP` for assistant head+tail, and `MAX_TRANSCRIPT_CHARS` for
-the whole body.
+See [dsh-context-mode-compaction](https://www.npmjs.com/package/dsh-context-mode-compaction)
+for the checkpoint format, the tuning constants, and the preset wiring.
 
 ## Development
 

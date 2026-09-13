@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",
@@ -23,14 +23,6 @@
     ".": {
       "types": "./lib/types/index.d.ts",
       "import": "./lib/types/index.js"
-    },
-    "./compaction": {
-      "types": "./lib/types/compaction.d.ts",
-      "import": "./lib/types/compaction.js"
-    },
-    "./transcript": {
-      "types": "./lib/types/transcript.d.ts",
-      "import": "./lib/types/transcript.js"
     },
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
@@ -67,20 +59,13 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-compaction-basic": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-tools": "^0.1.5-rc.2"
   },
-  "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-compaction-basic": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/dsh-agent": "0.1.5-rc.2",
-    "@deepseek-ai/dsh-compaction-basic": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-skill": "^0.1.5-rc.2",
     "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.2",

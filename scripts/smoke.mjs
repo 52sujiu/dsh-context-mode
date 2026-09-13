@@ -8,8 +8,6 @@ import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
 import { __spillRecordsForTests, installOutputContainment } from '../lib/types/output-containment.js'
-import { appendToSummary, buildArchiveIndex, DshContextModeCompaction } from '../lib/types/compaction.js'
-import { buildTranscript, isCheckpointEvent, renderTranscript } from '../lib/types/transcript.js'
 import { classify, installPrecompactArchive, isInjectedContext, statesAConcreteValue } from '../lib/types/precompact.js'
 import { isFloodingSegment, isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
@@ -299,111 +297,6 @@ try {
   })
   const memory = assembly.contexts.find(context => context.name === 'dsh-context-mode:active-memory')
   assert.ok(memory?.text.includes('retain this decision'), 'active session memory is injected')
-
-  // Compaction engine: the subclass must extend the shipped backend and append
-  // an archive index without disturbing the rest of the summary envelope.
-  assert.equal(
-    Object.getPrototypeOf(DshContextModeCompaction.prototype)?.constructor?.name,
-    'BasicCompactionEngine',
-    'the compaction engine extends the shipped backend',
-  )
-  const indexAgent = { session: { id: 'sess-42', snapshotEvents: () => [] } }
-  const index = buildArchiveIndex(indexAgent)
-  assert.ok(index.includes('session/sess-42/constraint'), 'the index names the constraint layer')
-  assert.ok(index.includes('session/sess-42/finding'), 'the index names the finding layer')
-  assert.ok(index.includes('session/sess-42/narrative'), 'the index names the narrative layer')
-  assert.ok(index.includes('ctx_search'), 'the index names the retrieval tool')
-  assert.ok(index.length <= 1_200, 'the index stays within its size budget')
-  assert.equal(buildArchiveIndex({}), '', 'a missing session yields no index')
-  assert.equal(buildArchiveIndex({ session: { snapshotEvents: () => [] } }), '', 'a missing id yields no index')
-
-  const appended = appendToSummary([{ type: 'text', text: 'BODY' }], 'INDEX')
-  assert.equal(appended[0].text, 'BODY\n\nINDEX', 'the index is appended to the trailing text block')
-  assert.equal(appended.length, 1, 'appending does not add a block when text exists')
-
-  const nonText = appendToSummary([{ type: 'image', source: {} }], 'INDEX')
-  assert.equal(nonText.length, 2, 'a summary without text gains a text block')
-  assert.equal(nonText[1].text, 'INDEX', 'the added block carries the index')
-  assert.equal(appendToSummary([], 'INDEX')[0].text, 'INDEX', 'an empty summary gains the index')
-
-  // The superseded summary must be left alone: appending works on copies.
-  const original = [{ type: 'text', text: 'BODY' }]
-  appendToSummary(original, 'INDEX')
-  assert.equal(original[0].text, 'BODY', 'appending does not mutate the input summary')
-
-  // Transcript: conversation survives, tool output does not, and every clipped
-  // or dropped region leaves a pointer naming the archive source.
-  const longAssistant = 'H'.repeat(2_000)
-  const longUser = 'U'.repeat(5_000)
-  const transcriptEvents = [
-    { type: 'user/message', seq: 5, data: { message: { content: [{ type: 'text', text: 'short ask' }] } } },
-    { type: 'user/message', seq: 6, data: { message: { content: [{ type: 'text', text: longUser }] } } },
-    {
-      type: 'assistant/message',
-      seq: 7,
-      data: {
-        message: {
-          content: [
-            { type: 'text', text: 'lead-in' },
-            { type: 'tool-call', id: 'call_a|resp_a', name: 'ctx_execute', arguments: '{}' },
-          ],
-        },
-      },
-    },
-    {
-      type: 'tool/result',
-      seq: 8,
-      data: { message: { source: { kind: 'tool', callId: 'call_a|resp_a' }, content: [{ type: 'tool-result', toolCallId: 'call_a|resp_a', content: [{ type: 'text', text: 'X'.repeat(3_000) }] }] } },
-    },
-    { type: 'assistant/message', seq: 9, data: { message: { content: [{ type: 'text', text: longAssistant }] } } },
-    // A prior checkpoint must never be transcribed forward.
-    {
-      type: 'user/message',
-      seq: 10,
-      data: { message: { source: { kind: 'plugin', plugin: 'compact' }, content: [{ type: 'text', text: 'This is an automatically generated checkpoint condensing…' }] } },
-    },
-    // Injected runtime noise is not conversation.
-    { type: 'user/message', seq: 11, data: { message: { content: [{ type: 'text', text: '<active_memory>\nnoise\n</active_memory>' }] } } },
-  ]
-  const transcript = buildTranscript(transcriptEvents, { base: 'session/t1' })
-  const kinds = transcript.map(line => line.kind)
-  assert.deepEqual(kinds, ['user', 'user', 'assistant', 'tool', 'assistant'], 'transcript keeps conversation and indexes tool output')
-  assert.equal(buildTranscript(transcriptEvents, { base: 'session/t1' }).length, 5, 'buildTranscript is deterministic')
-  assert.ok(!transcript.some(line => line.text.includes('automatically generated checkpoint')), 'a prior checkpoint is not transcribed forward')
-  assert.ok(!transcript.some(line => line.text.includes('noise')), 'injected context is not transcribed')
-
-  const toolEntry = transcript.find(line => line.kind === 'tool')
-  assert.ok(toolEntry.text.includes('ctx_execute'), 'a tool entry names the tool, not its call id')
-  assert.ok(toolEntry.text.includes('3000 chars'), 'a tool entry reports the output size')
-  assert.ok(toolEntry.text.includes('session/t1/finding'), 'a tool entry points at the archive layer')
-  assert.ok(!toolEntry.text.includes('X'.repeat(100)), 'tool output is never copied')
-
-  const clippedUser = transcript[1]
-  assert.ok(clippedUser.text.includes('U'.repeat(500)), 'a long user message keeps its head')
-  assert.ok(clippedUser.text.includes('elided'), 'a long user message reports what was dropped')
-  assert.ok(clippedUser.text.includes('session/t1/constraint'), 'a clipped user message points at the archive')
-  assert.ok(clippedUser.text.length < longUser.length, 'a clipped user message is smaller than its source')
-
-  const clippedAssistant = transcript[4]
-  assert.ok(clippedAssistant.text.includes('elided'), 'a long assistant message is clipped')
-  assert.ok(clippedAssistant.text.length < longAssistant.length, 'a clipped assistant message is smaller than its source')
-
-  const shortUser = transcript[0]
-  assert.ok(!shortUser.text.includes('elided'), 'a short user message is kept whole')
-
-  assert.equal(isCheckpointEvent({ type: 'user/message', data: { message: { source: { kind: 'plugin', plugin: 'compact' } } } }), true, 'the checkpoint marker is recognized by source')
-  assert.equal(isCheckpointEvent({ type: 'user/message', data: { message: { content: [{ type: 'text', text: 'This is an automatically generated checkpoint…' }] } } }), true, 'the checkpoint preamble is recognized without a source')
-  assert.equal(isCheckpointEvent({ type: 'user/message', data: { message: { content: [{ type: 'text', text: 'a normal ask' }] } } }), false, 'a normal message is not a checkpoint')
-
-  // A bound tight enough to drop entries keeps the newest ones and says so.
-  // 400 would also drop the newest entry (521 chars), so 1_000 is the bound
-  // that exercises "keep the tail, report the rest" rather than "drop all".
-  const bounded = renderTranscript(transcript, 1_000)
-  assert.ok(bounded.length <= 1_000 + 250, 'renderTranscript honours its bound')
-  assert.ok(bounded.startsWith('[...'), 'an over-long transcript reports what it dropped')
-  assert.ok(bounded.includes('assistant 9'), 'an over-long transcript keeps its newest entries')
-  assert.ok(!bounded.includes('[user 5]'), 'an over-long transcript drops its oldest entries')
-  assert.equal(renderTranscript(transcript, 1_000_000), transcript.map(line => line.text).join('\n\n'), 'a transcript within the bound is rendered whole')
 
   const skills = ctx.get('skills')
   assert.ok(skills, 'skills service is mounted')
