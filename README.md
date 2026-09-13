@@ -124,6 +124,48 @@ node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path>     
 node node_modules/dsh-context-mode/scripts/cleanup-injected.mjs --db <path> --apply    # delete
 ```
 
+## Checkpoint archive index
+
+A checkpoint keeps only a summary of the span it replaces, and the shipped
+checkpoint format has no section for tool output — a long tool result survives
+only as whatever the summarizing model chose to keep. `precompact` files that
+same span into the knowledge base beforehand, but nothing told the model so,
+and a summary that omits a detail reads as if the detail never existed.
+
+This package also exports a compaction engine that closes that gap. It extends
+the shipped `BasicCompactionEngine` and overrides only `summarize()`, appending
+an `## Archive Index` that names the archived sources:
+
+```ts
+import DshContextModeCompaction from 'dsh-context-mode/compaction'
+```
+
+Mount it in place of the shipped backend, inside the isolate group the shipped
+one requires:
+
+```yaml
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: 'dsh-context-mode/compaction'   # was @deepseek-ai/dsh-compaction-basic
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+```
+
+Trigger policy, retention, the transaction bracket, token metering, and
+prefix-cache-aligned replay all stay on the shipped engine — only the returned
+summary text differs. The index is appended to the summary rather than injected
+into the summarization instruction, so the shipped output contract is untouched
+and no model has to follow an amended format. Failing to build the index
+returns the superseded summary unchanged, and restoring the shipped `name` row
+disables the index entirely.
+
 ## Development
 
 ```sh

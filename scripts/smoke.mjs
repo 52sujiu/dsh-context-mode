@@ -8,6 +8,7 @@ import Tools from '@deepseek-ai/dsh-tools'
 import Skills from '@deepseek-ai/dsh-skill'
 import * as plugin from '../lib/types/index.js'
 import { __spillRecordsForTests, installOutputContainment } from '../lib/types/output-containment.js'
+import { appendToSummary, buildArchiveIndex, DshContextModeCompaction } from '../lib/types/compaction.js'
 import { classify, installPrecompactArchive, isInjectedContext, statesAConcreteValue } from '../lib/types/precompact.js'
 import { isFloodingSegment, isSafeCurlWget, stripQuotedContent } from '../lib/types/routing.js'
 
@@ -297,6 +298,37 @@ try {
   })
   const memory = assembly.contexts.find(context => context.name === 'dsh-context-mode:active-memory')
   assert.ok(memory?.text.includes('retain this decision'), 'active session memory is injected')
+
+  // Compaction engine: the subclass must extend the shipped backend and append
+  // an archive index without disturbing the rest of the summary envelope.
+  assert.equal(
+    Object.getPrototypeOf(DshContextModeCompaction.prototype)?.constructor?.name,
+    'BasicCompactionEngine',
+    'the compaction engine extends the shipped backend',
+  )
+  const indexAgent = { session: { id: 'sess-42', snapshotEvents: () => [] } }
+  const index = buildArchiveIndex(indexAgent)
+  assert.ok(index.includes('session/sess-42/constraint'), 'the index names the constraint layer')
+  assert.ok(index.includes('session/sess-42/finding'), 'the index names the finding layer')
+  assert.ok(index.includes('session/sess-42/narrative'), 'the index names the narrative layer')
+  assert.ok(index.includes('ctx_search'), 'the index names the retrieval tool')
+  assert.ok(index.length <= 1_200, 'the index stays within its size budget')
+  assert.equal(buildArchiveIndex({}), '', 'a missing session yields no index')
+  assert.equal(buildArchiveIndex({ session: { snapshotEvents: () => [] } }), '', 'a missing id yields no index')
+
+  const appended = appendToSummary([{ type: 'text', text: 'BODY' }], 'INDEX')
+  assert.equal(appended[0].text, 'BODY\n\nINDEX', 'the index is appended to the trailing text block')
+  assert.equal(appended.length, 1, 'appending does not add a block when text exists')
+
+  const nonText = appendToSummary([{ type: 'image', source: {} }], 'INDEX')
+  assert.equal(nonText.length, 2, 'a summary without text gains a text block')
+  assert.equal(nonText[1].text, 'INDEX', 'the added block carries the index')
+  assert.equal(appendToSummary([], 'INDEX')[0].text, 'INDEX', 'an empty summary gains the index')
+
+  // The superseded summary must be left alone: appending works on copies.
+  const original = [{ type: 'text', text: 'BODY' }]
+  appendToSummary(original, 'INDEX')
+  assert.equal(original[0].text, 'BODY', 'appending does not mutate the input summary')
 
   const skills = ctx.get('skills')
   assert.ok(skills, 'skills service is mounted')
