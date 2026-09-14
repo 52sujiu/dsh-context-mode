@@ -6,7 +6,10 @@
 `dsh-context-mode` exposes a self-contained context-mode server as native
 DeepSeek Harness tools. It registers the full `ctx_*` catalog at runtime and
 adds model-facing routing guidance, so dsh-TUI can use sandboxed execution,
-indexing, FTS5 retrieval, and web fetching without a second MCP client.
+indexing, FTS5 retrieval, and web fetching without a second MCP client. It also
+registers the eight user-invocable skills from the upstream package, so the
+DSH skill surface includes `/context-mode`, `/ctx-doctor`, `/ctx-index`,
+`/ctx-insight`, `/ctx-purge`, `/ctx-search`, `/ctx-stats`, and `/ctx-upgrade`.
 
 > **Part of a pair.** This is the *tool* half: the `ctx_*` tools, plus the
 > archiver that files each compaction's transcript into the knowledge base.

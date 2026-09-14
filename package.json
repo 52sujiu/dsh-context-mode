@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-mode",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Expose context-mode MCP tools as native DeepSeek Harness tools",
   "keywords": [
     "dsh",

@@ -92,6 +92,7 @@ interface SkillRegistryLike {
     path: string
     provider: string
     source: 'bundled'
+    invocation: { modelInvocable: boolean; userInvocable: boolean }
   }): () => void
 }
 
@@ -101,14 +102,47 @@ const EXCLUSIVE_CONTEXT_TOOLS = new Set([
   'ctx_upgrade',
 ])
 
-const BUNDLED_SKILL = {
-  name: 'context-mode',
-  description: 'Route large, inspectable, or data-heavy work through ctx_execute, ctx_execute_file, ctx_batch_execute, ctx_fetch_and_index, ctx_index, and ctx_search instead of raw Bash, web calls, or large output.',
-  whenToUse: 'Use automatically for logs, tests, build output, git history or diffs, API responses, web docs, dependency audits, recursive listings, structured data, snapshots, or any output that may exceed 20 lines. Keep native Read/Edit for exact text needed to edit files.',
-  path: 'skills/context-mode/SKILL.md',
+const BUNDLED_SKILLS = [
+  {
+    name: 'context-mode',
+    description: 'Route large, inspectable, or data-heavy work through ctx_* tools instead of raw Bash, web calls, or large output.',
+    whenToUse: 'Use automatically for logs, tests, builds, git history, API responses, web docs, dependency audits, structured data, or output that may exceed 20 lines.',
+  },
+  {
+    name: 'ctx-doctor',
+    description: 'Run context-mode diagnostics for runtimes, storage, bridge health, and registration.',
+  },
+  {
+    name: 'ctx-index',
+    description: 'Index a local file or directory into the persistent context-mode knowledge base.',
+  },
+  {
+    name: 'ctx-insight',
+    description: 'Open the hosted context-mode Insight analytics dashboard.',
+  },
+  {
+    name: 'ctx-purge',
+    description: 'Permanently purge context-mode indexed content with an explicit scope and confirmation.',
+  },
+  {
+    name: 'ctx-search',
+    description: 'Search previously indexed project content and session memory.',
+  },
+  {
+    name: 'ctx-stats',
+    description: 'Show context-mode token consumption, savings ratio, and per-tool statistics.',
+  },
+  {
+    name: 'ctx-upgrade',
+    description: 'Upgrade context-mode and report the resulting installation checklist.',
+  },
+].map(skill => ({
+  ...skill,
+  path: `skills/${skill.name}/SKILL.md`,
   provider: name,
   source: 'bundled' as const,
-}
+  invocation: { modelInvocable: true, userInvocable: true },
+}))
 
 /** Register the plugin and bridge context-mode's MCP tool catalog into DSH. */
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
@@ -148,7 +182,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     { enabled: resolved.precompact },
   )
   disposers.push(precompactDisposer)
-  const skillDisposer = registerBundledSkill(ctx)
+  const skillDisposer = registerBundledSkills(ctx)
   if (skillDisposer !== undefined) disposers.push(skillDisposer)
 
   try {
@@ -197,16 +231,19 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   }
 }
 
-function registerBundledSkill(ctx: Context): (() => void) | undefined {
+function registerBundledSkills(ctx: Context): (() => void) | undefined {
   const skills = ctx.get('skills', false) as SkillRegistryLike | undefined
   if (skills === undefined) return undefined
-  try {
-    const content = readFileSync(new URL('../../skills/context-mode/SKILL.md', import.meta.url), 'utf8')
-    return skills.register({ ...BUNDLED_SKILL, content })
-  } catch (error) {
-    ctx.logger.warn(`dsh-context-mode: bundled skill unavailable (${errorMessage(error)})`)
-    return undefined
+  const disposers: Array<() => void> = []
+  for (const skill of BUNDLED_SKILLS) {
+    try {
+      const content = readFileSync(new URL(`../../${skill.path}`, import.meta.url), 'utf8')
+      disposers.push(skills.register({ ...skill, content }))
+    } catch (error) {
+      ctx.logger.warn(`dsh-context-mode: bundled skill unavailable (${skill.name}: ${errorMessage(error)})`)
+    }
   }
+  return disposers.length === 0 ? undefined : () => disposers.forEach(dispose => dispose())
 }
 
 function toDefinition(tool: McpTool, client: McpStdioClient): ToolDefinition {

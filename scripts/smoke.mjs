@@ -59,6 +59,13 @@ try {
     batchSchema?.description?.includes('three or more independent commands'),
     'ctx_batch_execute description steers concurrent batch use',
   )
+  const registeredSkills = ctx.get('skills')
+  const skillNames = (await registeredSkills.list()).map(skill => skill.name)
+  assert.deepEqual(
+    skillNames.filter(name => name === 'context-mode' || name.startsWith('ctx-')).sort(),
+    ['context-mode', 'ctx-doctor', 'ctx-index', 'ctx-insight', 'ctx-purge', 'ctx-search', 'ctx-stats', 'ctx-upgrade'],
+    'all context-mode user-invocable skills are registered',
+  )
   const routing = await ctx.get('systemPrompt').assemble({})
   const routingSection = routing.sections.find(section => section.name === 'dsh-context-mode:routing')
   assert.ok(routingSection?.text.includes('default'), 'routing section is injected into the system prompt')
@@ -300,7 +307,11 @@ try {
 
   const skills = ctx.get('skills')
   assert.ok(skills, 'skills service is mounted')
-  assert.ok((await skills.list()).some(skill => skill.name === 'context-mode'), 'bundled context-mode skill is registered')
+  assert.deepEqual(
+    (await skills.list()).filter(skill => skill.name === 'context-mode' || skill.name.startsWith('ctx-')).map(skill => skill.name).sort(),
+    ['context-mode', 'ctx-doctor', 'ctx-index', 'ctx-insight', 'ctx-purge', 'ctx-search', 'ctx-stats', 'ctx-upgrade'],
+    'all context-mode user-invocable skills are registered',
+  )
 
   const result = await tools.execute({
     callId: 'dsh-context-mode-smoke',
