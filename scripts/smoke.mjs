@@ -47,7 +47,10 @@ try {
   const names = tools.schemas().map(tool => tool.name)
   assert.ok(names.includes('ctx_execute'), 'ctx_execute is registered')
   assert.ok(names.includes('ctx_search'), 'ctx_search is registered')
-  assert.equal(names.filter(name => name.startsWith('ctx_')).length, 11, 'all context-mode tools are registered')
+  assert.equal(names.filter(name => name.startsWith('ctx_')).length, 8, 'context-mode tools minus the maintenance default are registered')
+  for (const hidden of ['ctx_doctor', 'ctx_insight', 'ctx_stats']) {
+    assert.equal(names.includes(hidden), false, `${hidden} is off by default`)
+  }
   const schemas = tools.schemas()
   const executeSchema = schemas.find(tool => tool.name === 'ctx_execute')
   assert.ok(
@@ -63,8 +66,8 @@ try {
   const skillNames = (await registeredSkills.list()).map(skill => skill.name)
   assert.deepEqual(
     skillNames.filter(name => name === 'context-mode' || name.startsWith('ctx-')).sort(),
-    ['context-mode', 'ctx-doctor', 'ctx-index', 'ctx-insight', 'ctx-purge', 'ctx-search', 'ctx-stats', 'ctx-upgrade'],
-    'all context-mode user-invocable skills are registered',
+    ['context-mode', 'ctx-index', 'ctx-purge', 'ctx-search', 'ctx-upgrade'],
+    'skills whose tool is disabled are not registered either',
   )
   const routing = await ctx.get('systemPrompt').assemble({})
   const routingSection = routing.sections.find(section => section.name === 'dsh-context-mode:routing')
@@ -309,8 +312,8 @@ try {
   assert.ok(skills, 'skills service is mounted')
   assert.deepEqual(
     (await skills.list()).filter(skill => skill.name === 'context-mode' || skill.name.startsWith('ctx-')).map(skill => skill.name).sort(),
-    ['context-mode', 'ctx-doctor', 'ctx-index', 'ctx-insight', 'ctx-purge', 'ctx-search', 'ctx-stats', 'ctx-upgrade'],
-    'all context-mode user-invocable skills are registered',
+    ['context-mode', 'ctx-index', 'ctx-purge', 'ctx-search', 'ctx-upgrade'],
+    'skills whose tool is disabled are not registered either',
   )
 
   const result = await tools.execute({

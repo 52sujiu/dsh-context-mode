@@ -8,8 +8,9 @@ DeepSeek Harness tools. It registers the full `ctx_*` catalog at runtime and
 adds model-facing routing guidance, so dsh-TUI can use sandboxed execution,
 indexing, FTS5 retrieval, and web fetching without a second MCP client. It also
 registers the eight user-invocable skills from the upstream package, so the
-DSH skill surface includes `/context-mode`, `/ctx-doctor`, `/ctx-index`,
-`/ctx-insight`, `/ctx-purge`, `/ctx-search`, `/ctx-stats`, and `/ctx-upgrade`.
+DSH skill surface includes `/context-mode`, `/ctx-index`, `/ctx-purge`,
+`/ctx-search`, and `/ctx-upgrade`; the diagnostics, analytics, and statistics
+skills are off by default with their tools.
 
 > **Part of a pair.** This is the *tool* half: the `ctx_*` tools, plus the
 > archiver that files each compaction's transcript into the knowledge base.
@@ -77,6 +78,7 @@ The default patch starts the bridge with:
 - the current working directory as the project directory
 - `~/.dsh/context-mode` as the isolated database root
 - a 60-second initialize and tool-catalog timeout
+- `disabledTools: [ctx_doctor, ctx_insight, ctx_stats]`
 
 Override the row's `config` in a profile patch when needed:
 
@@ -88,7 +90,19 @@ Override the row's `config` in a profile patch when needed:
     projectDir: /absolute/path/to/worktree
     storageDir: /absolute/path/to/context-mode-data
     handshakeTimeoutMs: 120000
+    disabledTools: []          # opt the maintenance tools back in
 ```
+
+### Why some tools are off by default
+
+Every registered tool ships its full schema on every request, so a tool nobody
+calls is a permanent token tax. `ctx_doctor`, `ctx_insight`, and `ctx_stats`
+report on context-mode itself rather than on the user's work — a human runs
+them deliberately. Their skills are suppressed with them, since a skill that
+teaches a model to call an unregistered tool helps nobody.
+
+The tools behind `disabledTools` stay in the vendored engine; only their DSH
+registration is skipped. Set `disabledTools: []` to restore all eleven.
 
 `serverPath` is available for local development and pinned deployments. It may
 be an absolute path or a path relative to the profile process directory.
@@ -103,10 +117,12 @@ when the Cordis plugin is disposed.
 Context-mode analysis, indexing, search, and diagnostics tools are marked concurrency-safe so independent model tool calls may overlap. `ctx_insight`, `ctx_purge`, and `ctx_upgrade` remain exclusive because they open external UI or mutate installation and stored data.
 `ctx_batch_execute` additionally parallelizes its own command batch through its `concurrency` parameter.
 
-All eleven `ctx_*` capabilities are exposed on DSH — `ctx_execute`,
-`ctx_execute_file`, `ctx_batch_execute`, `ctx_fetch_and_index`, `ctx_index`,
-`ctx_search`, `ctx_stats`, `ctx_doctor`, `ctx_upgrade`, `ctx_purge`, and
-`ctx_insight`. Each registered tool carries DSH-specific routing guidance in its
+Eight of the eleven `ctx_*` capabilities are exposed on DSH by default —
+`ctx_execute`, `ctx_execute_file`, `ctx_batch_execute`, `ctx_fetch_and_index`,
+`ctx_index`, `ctx_search`, `ctx_upgrade`, and `ctx_purge`. `ctx_stats`,
+`ctx_doctor`, and `ctx_insight` are held back by `disabledTools` (see
+[Configuration](#configuration)). Each registered tool carries DSH-specific
+routing guidance in its
 description, and the plugin injects a routing section plus a bundled
 `context-mode` skill so the model reaches for these tools by default.
 

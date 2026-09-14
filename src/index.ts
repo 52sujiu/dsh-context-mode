@@ -41,7 +41,25 @@ export interface Config {
    * `ctx_search` can still reach what the compaction summary drops.
    */
   precompact?: boolean
+  /**
+   * Tool names to keep out of the model's catalog and the skill list.
+   *
+   * Every registered tool ships its full schema on every request, so a tool
+   * nobody calls is a permanent token tax. Defaults to the maintenance-only
+   * tools: diagnostics, analytics, and statistics are things a human runs
+   * deliberately, not something the model should reach for mid-task.
+   */
+  disabledTools?: string[]
 }
+
+/**
+ * Maintenance-only tools that are off unless a deployment opts back in.
+ *
+ * `ctx_doctor`, `ctx_insight`, and `ctx_stats` report on context-mode itself;
+ * the model has never needed them to do the user's work, and each one's schema
+ * is carried on every request.
+ */
+const DEFAULT_DISABLED_TOOLS = ['ctx_doctor', 'ctx_insight', 'ctx_stats'] as const
 
 export const Config: Schemastery<Config> = z.object({
   enabled: z.boolean().default(true),
@@ -50,6 +68,7 @@ export const Config: Schemastery<Config> = z.object({
   storageDir: z.string().default(''),
   handshakeTimeoutMs: z.number().step(1).min(1_000).default(60_000),
   precompact: z.boolean().default(true),
+  disabledTools: z.array(z.string()).default([...DEFAULT_DISABLED_TOOLS]),
 })
 
 const OUTPUT_SCHEMA: JsonSchemaNode = {
@@ -153,6 +172,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     storageDir: config.storageDir?.trim() || join(homedir(), '.dsh', 'context-mode'),
     handshakeTimeoutMs: config.handshakeTimeoutMs ?? 60_000,
     precompact: config.precompact ?? true,
+    disabledTools: new Set(config.disabledTools ?? DEFAULT_DISABLED_TOOLS),
   }
   if (!resolved.enabled) return
 
@@ -182,7 +202,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     { enabled: resolved.precompact },
   )
   disposers.push(precompactDisposer)
-  const skillDisposer = registerBundledSkills(ctx)
+  const skillDisposer = registerBundledSkills(ctx, resolved.disabledTools)
   if (skillDisposer !== undefined) disposers.push(skillDisposer)
 
   try {
@@ -209,6 +229,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     const systemPrompt = ctx.get('systemPrompt', false) as SystemPrompt | undefined
     for (const tool of catalog) {
       if (disposed) return
+      if (resolved.disabledTools.has(tool.name)) continue
       try {
         disposers.push(tools.register(toDefinition(tool, bridge)))
       } catch (error) {
@@ -231,11 +252,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   }
 }
 
-function registerBundledSkills(ctx: Context): (() => void) | undefined {
+function registerBundledSkills(
+  ctx: Context,
+  disabledTools: ReadonlySet<string>,
+): (() => void) | undefined {
   const skills = ctx.get('skills', false) as SkillRegistryLike | undefined
   if (skills === undefined) return undefined
   const disposers: Array<() => void> = []
   for (const skill of BUNDLED_SKILLS) {
+    // A skill whose tool is not registered would only teach the model to call
+    // something that is not there.
+    if (skill.name !== name && disabledTools.has(skill.name.replace(/-/g, '_'))) continue
     try {
       const content = readFileSync(new URL(`../../${skill.path}`, import.meta.url), 'utf8')
       disposers.push(skills.register({ ...skill, content }))

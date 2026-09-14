@@ -24,6 +24,15 @@ export interface Config {
      * `ctx_search` can still reach what the compaction summary drops.
      */
     precompact?: boolean;
+    /**
+     * Tool names to keep out of the model's catalog and the skill list.
+     *
+     * Every registered tool ships its full schema on every request, so a tool
+     * nobody calls is a permanent token tax. Defaults to the maintenance-only
+     * tools: diagnostics, analytics, and statistics are things a human runs
+     * deliberately, not something the model should reach for mid-task.
+     */
+    disabledTools?: string[];
 }
 export declare const Config: Schemastery<Config>;
 export declare const ROUTING_TEXT: string;
