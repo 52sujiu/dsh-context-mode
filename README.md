@@ -1,9 +1,23 @@
 # context-mode for DSH
 
+[![npm](https://img.shields.io/npm/v/dsh-context-mode)](https://www.npmjs.com/package/dsh-context-mode)
+[![license](https://img.shields.io/npm/l/dsh-context-mode)](./LICENSE)
+
 `dsh-context-mode` exposes a self-contained context-mode server as native
 DeepSeek Harness tools. It registers the full `ctx_*` catalog at runtime and
 adds model-facing routing guidance, so dsh-TUI can use sandboxed execution,
 indexing, FTS5 retrieval, and web fetching without a second MCP client.
+
+> **Part of a pair.** This is the *tool* half: the `ctx_*` tools, plus the
+> archiver that files each compaction's transcript into the knowledge base.
+> Its companion
+> [`dsh-context-mode-compaction`](https://github.com/52sujiu/dsh-context-mode-compaction)
+> is the *strategy* half: it replaces DSH's compaction engine so a checkpoint
+> rebuilds the conversation instead of only summarizing it.
+>
+> **Install both.** Without the strategy package, the archive is still written
+> but no checkpoint points at it; without this one, checkpoints point at an
+> archive nothing fills.
 
 The engine is vendored: `vendor/context-mode/` carries the source and this
 package builds its own `server.bundle.mjs` from it. There is **no `context-mode`
@@ -30,8 +44,17 @@ Elastic License 2.0.
 dsh plugin --profile dsh-tui add dsh-context-mode
 ```
 
-Restart the profile after installation. Removing the package removes its profile
-row as well:
+To get the full pair — this package plus the compaction strategy that turns a
+checkpoint into a searchable transcript — add both and run the wiring step:
+
+```sh
+dsh plugin --profile dsh-tui add dsh-context-mode
+dsh plugin --profile dsh-tui add dsh-context-mode-compaction
+npx dsh-context-mode-compaction      # point the preset's compaction row here
+```
+
+Restart the profile afterwards either way. Removing a package removes its
+profile row as well:
 
 ```sh
 dsh plugin --profile dsh-tui remove dsh-context-mode
